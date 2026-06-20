@@ -1,0 +1,60 @@
+# Generates a real RISC Zero Groth16 proof for the Veil spike on an x86_64
+# Linux runner (native x86 + Docker — the STARK→Groth16 wrap needs both, and
+# won't run on an 8GB Apple Silicon Mac without OOM). Uploads proof.txt
+# (seal / image_id / journal_digest) as an artifact for on-chain verification.
+name: groth16-proof
+
+on:
+  workflow_dispatch:        # run manually from the Actions tab or `gh workflow run`
+  push:
+    branches: [veil/rename-and-phase1-spike]   # auto-run on push to the spike branch
+    paths: ['zk/**', '.github/workflows/groth16-proof.yml']
+
+jobs:
+  prove:
+    runs-on: ubuntu-latest  # x86_64, ~7GB RAM, Docker preinstalled
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            zk/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('zk/**/Cargo.lock') }}
+
+      - name: Install RISC Zero toolchain (rzup)
+        run: |
+          curl -L https://risczero.com/install | bash
+          echo "$HOME/.risc0/bin" >> "$GITHUB_PATH"
+
+      - name: Install RISC Zero components
+        run: |
+          export PATH="$HOME/.risc0/bin:$PATH"
+          rzup install cargo-risczero 3.0.5
+          rzup install r0vm 3.0.5
+          rzup install rust
+
+      - name: Generate Groth16 proof
+        working-directory: zk
+        env:
+          RISC0_DEV_MODE: "0"   # real proof; required for on-chain verification
+        run: |
+          export PATH="$HOME/.risc0/bin:$PATH"
+          cargo run -p host -- groth16
+          echo "----- proof.txt -----"
+          cat proof.txt
+
+      - name: Upload proof artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: groth16-proof
+          path: |
+            zk/proof.txt
+            zk/commit.txt
+          if-no-files-found: error
