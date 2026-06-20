@@ -1,0 +1,332 @@
+@import "tailwindcss";
+
+/*
+  Veil design tokens — dark cinematic, technical, proof-receipt feel.
+  All colors live as CSS custom properties on :root and are referenced
+  via Tailwind arbitrary values (bg-[var(--surface)]) or inline styles.
+*/
+
+:root {
+  /* Surfaces */
+  --bg: #07070d;
+  --bg-2: #0a0a12;
+  --surface: #0f0f1b;
+  --surface-2: #14142233;
+  --line: rgba(255, 255, 255, 0.09);
+  --line-2: rgba(255, 255, 255, 0.05);
+
+  /* Ink */
+  --text: #ececf4;
+  --muted: #8e8ea6;
+  --faint: #5b5b72;
+
+  /* Accent — electric indigo */
+  --accent: #4b3bff;
+  --accent-2: #7c6bff;
+  --accent-ink: #e9e6ff;
+
+  /* Iridescent mesh — light/glow only, never flat fill */
+  --m-violet: #9b8cff;
+  --m-pink: #ffb3d1;
+  --m-teal: #8fe3d0;
+  --m-blue: #7aa9ff;
+
+  /* Motion */
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* Fonts (wired to next/font variables in layout.tsx) */
+  --font-display: var(--font-space-grotesk), system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, monospace;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --font-display: var(--font-space-grotesk);
+  --font-mono: var(--font-plex-mono);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--bg);
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum" 1;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* ── Display type ──────────────────────────────────────────── */
+.display {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 0.95;
+}
+
+.display-tight {
+  letter-spacing: -0.04em;
+}
+
+/* Italic gradient accent word (the iridescent pop) */
+.accent-grad {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 400;
+  background: linear-gradient(
+    100deg,
+    var(--m-violet),
+    var(--m-pink) 45%,
+    var(--m-teal)
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+/* ── Kicker eyebrow ────────────────────────────────────────── */
+.kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.24em;
+  color: var(--muted);
+}
+
+.kicker::before {
+  content: "";
+  width: 26px;
+  height: 1px;
+  background: var(--accent-2);
+}
+
+/* Mesh glow — diffuse, sparing */
+.mesh-glow {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(
+      40% 50% at 18% 12%,
+      color-mix(in srgb, var(--m-violet) 18%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      36% 44% at 86% 8%,
+      color-mix(in srgb, var(--m-blue) 14%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      50% 60% at 60% 100%,
+      color-mix(in srgb, var(--m-teal) 10%, transparent),
+      transparent 70%
+    );
+  filter: blur(8px);
+}
+
+/* ── Buttons ───────────────────────────────────────────────── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  padding: 13px 22px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--text);
+  border-radius: 2px;
+  cursor: pointer;
+  transition:
+    background 0.25s var(--ease),
+    border-color 0.25s var(--ease),
+    color 0.25s var(--ease),
+    transform 0.25s var(--ease),
+    opacity 0.2s var(--ease);
+}
+
+.btn:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent-2) 60%, var(--line));
+  background: var(--surface);
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-2);
+  border-color: var(--accent-2);
+}
+
+.btn-teal {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--m-teal) 45%, var(--line));
+  color: var(--m-teal);
+}
+
+/* ── Panels / receipts ─────────────────────────────────────── */
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+}
+
+.hairline {
+  border-color: var(--line);
+}
+
+/* Receipt rows: label / value pairs */
+.receipt-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--line-2);
+  font-size: 12.5px;
+}
+
+.receipt-row:last-child {
+  border-bottom: none;
+}
+
+.receipt-label {
+  color: var(--faint);
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.receipt-val {
+  color: var(--text);
+  text-align: right;
+  word-break: break-all;
+}
+
+/* Link styling */
+.link {
+  color: var(--accent-2);
+  text-decoration: none;
+  transition: color 0.2s var(--ease);
+}
+
+.link:hover {
+  color: var(--accent-ink);
+}
+
+/* Teal "verified" text */
+.verified {
+  color: var(--m-teal);
+}
+
+/* Status banners */
+.status {
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 14px 16px;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.status-ok {
+  border-color: color-mix(in srgb, var(--m-teal) 40%, transparent);
+  background: color-mix(in srgb, var(--m-teal) 7%, transparent);
+  color: var(--m-teal);
+}
+
+.status-err {
+  border-color: color-mix(in srgb, var(--m-pink) 40%, transparent);
+  background: color-mix(in srgb, var(--m-pink) 7%, transparent);
+  color: var(--m-pink);
+}
+
+.status-info {
+  border-color: var(--line);
+  background: var(--surface);
+  color: var(--muted);
+}
+
+/* Inputs */
+.field {
+  width: 100%;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  padding: 12px 14px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  transition: border-color 0.2s var(--ease);
+}
+
+.field:focus {
+  outline: none;
+  border-color: var(--accent-2);
+}
+
+.field::placeholder {
+  color: var(--faint);
+}
+
+/* Subtle entrance for hero/console — disabled under reduced motion */
+@keyframes veil-rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.rise {
+  animation: veil-rise 0.7s var(--ease) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+  .rise {
+    opacity: 1;
+    transform: none;
+  }
+}
