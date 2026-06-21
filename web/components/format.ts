@@ -54,10 +54,44 @@ export function formatTimestamp(seconds: bigint | number): string {
   });
 }
 
+/**
+ * Best-effort extraction of a human string from any thrown value.
+ *
+ * The stellar-sdk contract client often throws plain objects (simulation /
+ * assembly errors), not Error instances — `String(obj)` on those yields
+ * "[object Object]" and hides the real cause. We dig through the common shapes
+ * and fall back to JSON so a real message always surfaces.
+ */
+function errToString(err: unknown): string {
+  if (err == null) return "Unknown error";
+  if (typeof err === "string") return err;
+  if (err instanceof Error) return err.message || err.toString();
+  if (typeof err === "object") {
+    const o = err as Record<string, unknown>;
+    // Common message-bearing fields across sdk / rpc / wallet errors.
+    for (const key of ["message", "detail", "error", "reason", "result"]) {
+      const v = o[key];
+      if (typeof v === "string" && v.trim()) return v;
+      if (v && typeof v === "object") {
+        const nested = errToString(v);
+        if (nested && nested !== "[object Object]") return nested;
+      }
+    }
+    // Some sdk errors put the useful text on toString().
+    const s = String(err);
+    if (s && s !== "[object Object]") return s;
+    try {
+      return JSON.stringify(err);
+    } catch {
+      return "Unknown error";
+    }
+  }
+  return String(err);
+}
+
 /** Normalize any thrown contract/wallet error into a friendly message. */
 export function friendlyError(err: unknown, map?: Record<string, string>): string {
-  const raw =
-    err instanceof Error ? err.message : typeof err === "string" ? err : String(err);
+  const raw = errToString(err);
 
   // Map known contract error names (from bindings Errors) when present.
   const known: Record<string, string> = {
@@ -75,6 +109,26 @@ export function friendlyError(err: unknown, map?: Record<string, string>): strin
     AlreadyRevealed: "You have already revealed for this round.",
     ...map,
   };
+
+  // Soroban surfaces contract errors as `Error(Contract, #N)` (numeric code),
+  // not by name — map those to the same friendly messages. Codes match the
+  // contract's Error enum (lib/bindings Errors). This is what actually fires in
+  // the browser; the name match below is a belt-and-suspenders fallback.
+  const byCode: Record<string, string> = {
+    "1": known.AlreadyInitialized,
+    "2": known.NotInitialized,
+    "3": known.DeadlinePassed,
+    "4": known.AlreadyCommitted,
+    "5": known.JournalMismatch,
+    "6": known.ImageIdMismatch,
+    "7": known.OutcomeAlreadySet,
+    "8": known.OutcomeNotSet,
+    "9": known.NoCommitment,
+    "10": known.RevealMismatch,
+    "11": known.AlreadyRevealed,
+  };
+  const codeMatch = raw.match(/Error\s*\(\s*Contract\s*,\s*#?(\d+)\s*\)/i);
+  if (codeMatch && byCode[codeMatch[1]]) return byCode[codeMatch[1]];
 
   for (const [name, message] of Object.entries(known)) {
     if (raw.includes(name)) return message;

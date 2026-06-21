@@ -16,15 +16,44 @@ let initialized = false;
 
 function ensureInit(): void {
   if (initialized) return;
+  // The kit restores `activeAddress` and `selectedModuleId` from localStorage,
+  // but the active *module* only resolves once `activeModules` is populated by
+  // init(). Pass the persisted wallet id as `selectedWalletId` so a restored
+  // session re-establishes its active module — otherwise getAddress() succeeds
+  // (address is cached) while signTransaction() throws "Please set the wallet
+  // first" because no module is active.
+  let restoredId: string | undefined;
+  try {
+    restoredId =
+      globalThis.localStorage?.getItem("@StellarWalletsKit/selectedModuleId") ??
+      undefined;
+  } catch {
+    restoredId = undefined;
+  }
   StellarWalletsKit.init({
     network: Networks.TESTNET,
     // Albedo first: it works on testnet without an extension (best for demos).
     modules: [new AlbedoModule(), new FreighterModule(), new xBullModule()],
+    ...(restoredId ? { selectedWalletId: restoredId } : {}),
   });
   initialized = true;
 }
 
 export const PASSPHRASE = NETWORK_PASSPHRASE;
+
+/**
+ * True if a wallet *module* is actually active (not just a cached address).
+ * Signing needs an active module; a bare restored address is not enough.
+ */
+export function hasActiveModule(): boolean {
+  ensureInit();
+  try {
+    // Accessing selectedModule throws if no module is active.
+    return !!StellarWalletsKit.selectedModule;
+  } catch {
+    return false;
+  }
+}
 
 /** Open the wallet picker and resolve the connected public key. */
 export async function connect(): Promise<string> {
@@ -33,9 +62,16 @@ export async function connect(): Promise<string> {
   return address;
 }
 
-/** Re-fetch the address of the already-selected wallet (no modal). */
+/**
+ * Re-fetch the address only when a wallet module is genuinely active. Returns
+ * null instead of throwing/returning a hollow address, so the UI does not show
+ * "connected" for a session that can't actually sign.
+ */
 export async function getAddress(): Promise<string> {
   ensureInit();
+  if (!hasActiveModule()) {
+    throw { code: -1, message: "No wallet has been connected." };
+  }
   const { address } = await StellarWalletsKit.getAddress();
   return address;
 }
@@ -55,6 +91,13 @@ export async function signTransaction(
   opts?: { networkPassphrase?: string; address?: string },
 ): Promise<{ signedTxXdr: string; signerAddress?: string }> {
   ensureInit();
+  if (!hasActiveModule()) {
+    throw {
+      code: -1,
+      message:
+        "Wallet not connected. Click Connect wallet and pick Albedo or Freighter, then try again.",
+    };
+  }
   const { signedTxXdr, signerAddress } = await StellarWalletsKit.signTransaction(
     xdr,
     {

@@ -76,8 +76,10 @@ export default function PredictPage() {
       setCommitState({ phase: "done", txHash });
     } catch (e) {
       const msg = friendlyError(e);
-      // AlreadyCommitted is an expected, non-error state for the demo.
-      if (e instanceof Error && /AlreadyCommitted/.test(e.message)) {
+      // AlreadyCommitted is an expected, non-error state for the demo. Soroban
+      // reports it as Error(Contract, #4) (numeric), so match the code or name.
+      const raw = JSON.stringify(e) + String(e);
+      if (/AlreadyCommitted/.test(raw) || /Error\s*\(\s*Contract\s*,\s*#?4\s*\)/i.test(raw)) {
         setCommitState({ phase: "already" });
       } else {
         setCommitState({ phase: "error", message: msg });

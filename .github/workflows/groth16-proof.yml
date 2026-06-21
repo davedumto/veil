@@ -1,11 +1,37 @@
-# Generates a real RISC Zero Groth16 proof for the Veil spike on an x86_64
-# Linux runner (native x86 + Docker — the STARK→Groth16 wrap needs both, and
-# won't run on an 8GB Apple Silicon Mac without OOM). Uploads proof.txt
-# (seal / image_id / journal_digest) as an artifact for on-chain verification.
+# Generates a real RISC Zero Groth16 proof for the Veil prediction guest on an
+# x86_64 Linux runner (native x86 + Docker — the STARK→Groth16 wrap needs both,
+# and won't run on an 8GB Apple Silicon Mac without OOM). Uploads proof.txt
+# (seal / image_id / journal_digest) + commit.txt (x_hash / C / y / salt) as an
+# artifact for on-chain verification and reveal.
+#
+# Inputs let you generate a DISTINCT proof per predictor: a different forecast Y
+# comes from different private weights (w0, w1) and/or input X, and a different
+# salt blinds the commitment. Each run uploads a uniquely-named artifact.
 name: groth16-proof
 
 on:
-  workflow_dispatch:        # run manually from the Actions tab or `gh workflow run`
+  workflow_dispatch:
+    inputs:
+      label:
+        description: "Artifact label (e.g. predictorA) — names the uploaded proof"
+        required: true
+        default: "demo"
+      x:
+        description: "Public market input X (integer, price in cents)"
+        required: true
+        default: "10000"
+      w0:
+        description: "Private weight w0 / bias (integer)"
+        required: true
+        default: "500"
+      w1:
+        description: "Private weight w1 / slope (integer)"
+        required: true
+        default: "1"
+      salt:
+        description: "32-byte salt as 64 hex chars"
+        required: true
+        default: "0707070707070707070707070707070707070707070707070707070707070707"
   push:
     branches: [veil/rename-and-phase1-spike]   # auto-run on push to the spike branch
     paths: ['zk/**', '.github/workflows/groth16-proof.yml']
@@ -44,16 +70,23 @@ jobs:
         working-directory: zk
         env:
           RISC0_DEV_MODE: "0"   # real proof; required for on-chain verification
+          # Forecast parameters (default to the demo values on a push trigger).
+          VEIL_X: ${{ github.event.inputs.x || '10000' }}
+          VEIL_W0: ${{ github.event.inputs.w0 || '500' }}
+          VEIL_W1: ${{ github.event.inputs.w1 || '1' }}
+          VEIL_SALT: ${{ github.event.inputs.salt || '0707070707070707070707070707070707070707070707070707070707070707' }}
         run: |
           export PATH="$HOME/.risc0/bin:$PATH"
           cargo run -p host -- groth16
           echo "----- proof.txt -----"
           cat proof.txt
+          echo "----- commit.txt -----"
+          cat commit.txt
 
       - name: Upload proof artifact
         uses: actions/upload-artifact@v4
         with:
-          name: groth16-proof
+          name: groth16-proof-${{ github.event.inputs.label || 'demo' }}
           path: |
             zk/proof.txt
             zk/commit.txt
