@@ -39,7 +39,9 @@ export default function CommitmentsPage() {
         getOutcome(),
         getLeaderboard(),
       ]);
-      const revealedSet = new Set(leaderboard.map((e) => e.predictor));
+      // Coerce to string so the Set lookup below matches the commitment rows
+      // regardless of whether the SDK hands back string or Address-like values.
+      const revealedSet = new Set(leaderboard.map((e) => String(e.predictor)));
       setData({ commitments, outcome, revealedSet });
     } catch (e) {
       setError(friendlyError(e));
@@ -146,18 +148,23 @@ export default function CommitmentsPage() {
                 </tr>
               </thead>
               <tbody>
-                {commitments.map(({ predictor, commitment }) => {
-                  const revealed = data?.revealedSet.has(predictor) ?? false;
+                {commitments.map(({ predictor, commitment }, i) => {
+                  // predictor is typed string, but the SDK can hand back an
+                  // Address-like object — coerce so display + lookups are stable.
+                  const addr = String(predictor);
+                  const revealed = data?.revealedSet.has(addr) ?? false;
+                  // Composite key: unique even if an address ever repeats/decodes
+                  // oddly (one commitment per predictor, but be defensive).
                   return (
-                    <tr key={predictor}>
+                    <tr key={`${addr}-${bufHex(commitment.commitment_c)}-${i}`}>
                       <td style={cell}>
                         <a
                           className="link"
-                          href={explorerAccount(predictor)}
+                          href={explorerAccount(addr)}
                           target="_blank"
                           rel="noopener noreferrer"
                         >
-                          {shortAddr(predictor)} ↗
+                          {shortAddr(addr)} ↗
                         </a>
                       </td>
                       <td style={{ ...cell, color: "var(--muted)" }}>
