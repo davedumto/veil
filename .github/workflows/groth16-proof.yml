@@ -9,6 +9,11 @@
 # salt blinds the commitment. Each run uploads a uniquely-named artifact.
 name: groth16-proof
 
+# Embed the unique label in the run name so a backend that dispatches a run can
+# find it again (gh workflow run doesn't return the run id). The proving service
+# passes label = its jobId, then matches the run by this display name.
+run-name: "proof:${{ github.event.inputs.label || 'demo' }}"
+
 on:
   workflow_dispatch:
     inputs:

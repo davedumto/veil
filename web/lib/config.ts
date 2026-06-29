@@ -27,6 +27,17 @@ export const VERIFIER_CONTRACT_ID =
   process.env.NEXT_PUBLIC_VERIFIER_CONTRACT_ID ??
   "CAY5G7UCZF4BCX66NCKKMBKZMQCJUEYLGGE5WF25F25MHIVW52OB6WFZ";
 
+// ─── Proving service (server-side only) ───
+// The Groth16 wrap runs in GitHub Actions (x86 + Docker). The backend dispatches
+// the `groth16-proof` workflow per prediction and polls for the artifact.
+// These are read server-side only; never expose a token to the browser.
+export const PROOF_REPO = process.env.PROOF_REPO ?? "davedumto/ASN-Verix";
+export const PROOF_WORKFLOW = process.env.PROOF_WORKFLOW ?? "groth16-proof.yml";
+export const PROOF_REF = process.env.PROOF_REF ?? "veil/demo-rebuild";
+// Optional: a GH token with `workflow` scope for hosted deploys. Locally, the
+// backend falls back to the logged-in `gh` CLI auth if this is unset.
+export const PROOF_GH_TOKEN = process.env.GH_TOKEN ?? process.env.PROOF_GH_TOKEN;
+
 export const EXPLORER_BASE = "https://stellar.expert/explorer/testnet";
 
 export const explorerTx = (hash: string) => `${EXPLORER_BASE}/tx/${hash}`;
