@@ -34,18 +34,22 @@ if (typeof window !== "undefined") {
 export const networks = {
   testnet: {
     networkPassphrase: "Test SDF Network ; September 2015",
-    contractId: "CBGZ6UHAUQ2XXJC4XOO3UKQV7TY4GRPU4FVJ24KS3WAPUUPNYP3LCRQP",
+    contractId: "CCPEIU4WEQI2TYD4QCAH3GICM5EDE2IQFBB5EZZQUPSVBUEISSL7EIQI",
   }
 } as const
 
 
 /**
- * A revealed prediction and its score. `score = |y - outcome|`; lower is better.
+ * A revealed, scored prediction. The leaderboard is a `Vec<Entry>` ranked by
+ * `score` ascending (closest prediction first).
  */
 export interface Entry {
   predictor: string;
   revealed_at: u64;
-  score: i128;
+  /**
+ * Accuracy = `|Y - outcome|`. Lower is better.
+ */
+score: i128;
   y: i128;
 }
 
@@ -66,13 +70,29 @@ export const Errors = {
 
 export interface Config {
   /**
+ * Asset / unit label for display, e.g. "BTC/USD (cents)".
+ */
+asset: string;
+  /**
  * Round deadline as a ledger unix timestamp (seconds). Commits at or after
  * this instant are rejected. Distinct from the hackathon deadline (FR-3).
  */
 deadline: u64;
   image_id: Buffer;
   owner: string;
+  /**
+ * Human-readable round question, e.g. "BTC/USD close on 2026-07-01?".
+ * Lets the UI present a real prediction round, not a bare contract.
+ */
+question: string;
   router: string;
+  /**
+ * The public market input `X` for this round (integer, e.g. price in
+ * cents at round open). The guest hashes this into `x_hash`; the proving
+ * service uses it as the public input so every predictor forecasts the
+ * same `X`.
+ */
+x: i128;
 }
 
 
@@ -324,11 +344,12 @@ export enum SystemExitCode {
 export interface Client {
   /**
    * Construct and simulate a init transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * One-time configuration. `router` is the deployed RISC Zero verifier
-   * router; `image_id` is the Veil guest's program ID; `deadline` is the
-   * round cutoff (unix seconds).
+   * One-time configuration for a prediction round. `router` is the deployed
+   * RISC Zero verifier router; `image_id` is the Veil guest's program ID;
+   * `deadline` is the commit cutoff (unix seconds); `question`, `x`, and
+   * `asset` describe the round so the UI can present a real event.
    */
-  init: ({owner, router, image_id, deadline}: {owner: string, router: string, image_id: Buffer, deadline: u64}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  init: ({owner, router, image_id, deadline, question, x, asset}: {owner: string, router: string, image_id: Buffer, deadline: u64, question: string, x: i128, asset: string}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
 
   /**
    * Construct and simulate a commit transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
@@ -343,16 +364,19 @@ export interface Client {
 
   /**
    * Construct and simulate a reveal transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Reveal `(y, salt)` for a prior commitment (FR-6, FR-7).
+   * Reveal `(Y, salt)` and be scored (FR-6, FR-7).
    * 
-   * Requires the outcome to be set. Recomputes `sha256(y_le16 || salt)` and
-   * rejects unless it equals the stored commitment `C`. On success, records
-   * `score = |y - outcome|` and adds the predictor to the leaderboard.
+   * Requires the outcome to be set. Recomputes `sha256(Y_le_bytes || salt)` —
+   * the identical preimage the guest hashed (Y as i128 little-endian, then the
+   * 32-byte salt) — and rejects unless it equals the stored commitment `C`.
+   * On success the score is `|Y - outcome|` and an `Entry` is recorded.
+   * Returns the score.
    */
   reveal: ({predictor, y, salt}: {predictor: string, y: i128, salt: Buffer}, options?: MethodOptions) => Promise<AssembledTransaction<Result<i128>>>
 
   /**
    * Construct and simulate a get_entry transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Fetch a predictor's revealed+scored entry, if any.
    */
   get_entry: ({predictor}: {predictor: string}, options?: MethodOptions) => Promise<AssembledTransaction<Option<Entry>>>
 
@@ -363,32 +387,36 @@ export interface Client {
 
   /**
    * Construct and simulate a get_outcome transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * The actual outcome, if the owner has set it.
    */
   get_outcome: (options?: MethodOptions) => Promise<AssembledTransaction<Option<i128>>>
 
   /**
    * Construct and simulate a leaderboard transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Leaderboard: revealed entries ranked best-first (smallest score first) (FR-8).
+   * Leaderboard: revealed entries ranked best (lowest score) first (FR-8).
    */
   leaderboard: (options?: MethodOptions) => Promise<AssembledTransaction<Array<Entry>>>
 
   /**
    * Construct and simulate a set_outcome transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Owner-only: set the actual outcome once, after the event (FR-5).
-   * Rejects a second call so the target can't be moved after reveals begin.
+   * Owner sets the actual outcome once, after the event (FR-5).
+   * 
+   * Set-once: a second call is rejected with `OutcomeAlreadySet`, so the owner
+   * cannot move the target after predictors begin revealing.
    */
   set_outcome: ({outcome}: {outcome: i128}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
 
   /**
    * Construct and simulate a set_deadline transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Owner-only: update the round deadline (unix seconds).
+   * Update the round deadline (owner only). Useful for demo resets.
    */
   set_deadline: ({deadline}: {deadline: u64}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
 
   /**
    * Construct and simulate a set_image_id transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Owner-only: update the trusted guest image ID (e.g. after a guest rebuild
-   * or to point at a new prediction round's program).
+   * Update the accepted guest image ID (owner only). Needed because the CI
+   * build's image ID is canonical and may change if the CI runner changes
+   * (see memory.md: image ID differs by build environment).
    */
   set_image_id: ({image_id}: {image_id: Buffer}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
 
@@ -422,22 +450,22 @@ export class Client extends ContractClient {
   }
   constructor(public readonly options: ContractClientOptions) {
     super(
-      new ContractSpec([ "AAAAAQAAAE5BIHJldmVhbGVkIHByZWRpY3Rpb24gYW5kIGl0cyBzY29yZS4gYHNjb3JlID0gfHkgLSBvdXRjb21lfGA7IGxvd2VyIGlzIGJldHRlci4AAAAAAAAAAAAFRW50cnkAAAAAAAAEAAAAAAAAAAlwcmVkaWN0b3IAAAAAAAATAAAAAAAAAAtyZXZlYWxlZF9hdAAAAAAGAAAAAAAAAAVzY29yZQAAAAAAAAsAAAAAAAAAAXkAAAAAAAAL",
+      new ContractSpec([ "AAAAAQAAAHhBIHJldmVhbGVkLCBzY29yZWQgcHJlZGljdGlvbi4gVGhlIGxlYWRlcmJvYXJkIGlzIGEgYFZlYzxFbnRyeT5gIHJhbmtlZCBieQpgc2NvcmVgIGFzY2VuZGluZyAoY2xvc2VzdCBwcmVkaWN0aW9uIGZpcnN0KS4AAAAAAAAABUVudHJ5AAAAAAAABAAAAAAAAAAJcHJlZGljdG9yAAAAAAAAEwAAAAAAAAALcmV2ZWFsZWRfYXQAAAAABgAAACxBY2N1cmFjeSA9IGB8WSAtIG91dGNvbWV8YC4gTG93ZXIgaXMgYmV0dGVyLgAAAAVzY29yZQAAAAAAAAsAAAAAAAAAAXkAAAAAAAAL",
         "AAAABAAAAAAAAAAAAAAABUVycm9yAAAAAAAACwAAAAAAAAASQWxyZWFkeUluaXRpYWxpemVkAAAAAAABAAAAAAAAAA5Ob3RJbml0aWFsaXplZAAAAAAAAgAAAAAAAAAORGVhZGxpbmVQYXNzZWQAAAAAAAMAAAAAAAAAEEFscmVhZHlDb21taXR0ZWQAAAAEAAAAAAAAAA9Kb3VybmFsTWlzbWF0Y2gAAAAABQAAAAAAAAAPSW1hZ2VJZE1pc21hdGNoAAAAAAYAAAAAAAAAEU91dGNvbWVBbHJlYWR5U2V0AAAAAAAABwAAAAAAAAANT3V0Y29tZU5vdFNldAAAAAAAAAgAAAAAAAAADE5vQ29tbWl0bWVudAAAAAkAAAAAAAAADlJldmVhbE1pc21hdGNoAAAAAAAKAAAAAAAAAA9BbHJlYWR5UmV2ZWFsZWQAAAAACw==",
-        "AAAAAQAAAAAAAAAAAAAABkNvbmZpZwAAAAAABAAAAJBSb3VuZCBkZWFkbGluZSBhcyBhIGxlZGdlciB1bml4IHRpbWVzdGFtcCAoc2Vjb25kcykuIENvbW1pdHMgYXQgb3IgYWZ0ZXIKdGhpcyBpbnN0YW50IGFyZSByZWplY3RlZC4gRGlzdGluY3QgZnJvbSB0aGUgaGFja2F0aG9uIGRlYWRsaW5lIChGUi0zKS4AAAAIZGVhZGxpbmUAAAAGAAAAAAAAAAhpbWFnZV9pZAAAA+4AAAAgAAAAAAAAAAVvd25lcgAAAAAAABMAAAAAAAAABnJvdXRlcgAAAAAAEw==",
-        "AAAABQAAAC9FbWl0dGVkIHdoZW4gYSBwcmVkaWN0b3IgcmV2ZWFscyBhbmQgaXMgc2NvcmVkLgAAAAAAAAAACFJldmVhbGVkAAAAAQAAAAhyZXZlYWxlZAAAAAMAAAAAAAAACXByZWRpY3RvcgAAAAAAABMAAAABAAAAAAAAAAF5AAAAAAAACwAAAAAAAAAAAAAABXNjb3JlAAAAAAAACwAAAAAAAAAC",
+        "AAAAAQAAAAAAAAAAAAAABkNvbmZpZwAAAAAABwAAADdBc3NldCAvIHVuaXQgbGFiZWwgZm9yIGRpc3BsYXksIGUuZy4gIkJUQy9VU0QgKGNlbnRzKSIuAAAAAAVhc3NldAAAAAAAABAAAACQUm91bmQgZGVhZGxpbmUgYXMgYSBsZWRnZXIgdW5peCB0aW1lc3RhbXAgKHNlY29uZHMpLiBDb21taXRzIGF0IG9yIGFmdGVyCnRoaXMgaW5zdGFudCBhcmUgcmVqZWN0ZWQuIERpc3RpbmN0IGZyb20gdGhlIGhhY2thdGhvbiBkZWFkbGluZSAoRlItMykuAAAACGRlYWRsaW5lAAAABgAAAAAAAAAIaW1hZ2VfaWQAAAPuAAAAIAAAAAAAAAAFb3duZXIAAAAAAAATAAAAhUh1bWFuLXJlYWRhYmxlIHJvdW5kIHF1ZXN0aW9uLCBlLmcuICJCVEMvVVNEIGNsb3NlIG9uIDIwMjYtMDctMDE/Ii4KTGV0cyB0aGUgVUkgcHJlc2VudCBhIHJlYWwgcHJlZGljdGlvbiByb3VuZCwgbm90IGEgYmFyZSBjb250cmFjdC4AAAAAAAAIcXVlc3Rpb24AAAAQAAAAAAAAAAZyb3V0ZXIAAAAAABMAAADYVGhlIHB1YmxpYyBtYXJrZXQgaW5wdXQgYFhgIGZvciB0aGlzIHJvdW5kIChpbnRlZ2VyLCBlLmcuIHByaWNlIGluCmNlbnRzIGF0IHJvdW5kIG9wZW4pLiBUaGUgZ3Vlc3QgaGFzaGVzIHRoaXMgaW50byBgeF9oYXNoYDsgdGhlIHByb3ZpbmcKc2VydmljZSB1c2VzIGl0IGFzIHRoZSBwdWJsaWMgaW5wdXQgc28gZXZlcnkgcHJlZGljdG9yIGZvcmVjYXN0cyB0aGUKc2FtZSBgWGAuAAAAAXgAAAAAAAAL",
+        "AAAABQAAAC1FbWl0dGVkIHdoZW4gYSByZXZlYWwgaXMgYWNjZXB0ZWQgYW5kIHNjb3JlZC4AAAAAAAAAAAAACFJldmVhbGVkAAAAAQAAAAhyZXZlYWxlZAAAAAMAAAAAAAAACXByZWRpY3RvcgAAAAAAABMAAAABAAAAAAAAAAF5AAAAAAAACwAAAAAAAAAAAAAABXNjb3JlAAAAAAAACwAAAAAAAAAC",
         "AAAABQAAACZFbWl0dGVkIHdoZW4gYSBjb21taXRtZW50IGlzIGFjY2VwdGVkLgAAAAAAAAAAAAlDb21taXR0ZWQAAAAAAAABAAAACWNvbW1pdHRlZAAAAAAAAAMAAAAAAAAACXByZWRpY3RvcgAAAAAAABMAAAABAAAAAAAAAAxjb21taXRtZW50X2MAAAPuAAAAIAAAAAAAAAAAAAAADGNvbW1pdHRlZF9hdAAAAAYAAAAAAAAAAg==",
         "AAAAAQAAAAAAAAAAAAAACkNvbW1pdG1lbnQAAAAAAAUAAAAAAAAADGNvbW1pdG1lbnRfYwAAA+4AAAAgAAAAAAAAAAxjb21taXR0ZWRfYXQAAAAGAAAAAAAAAAhpbWFnZV9pZAAAA+4AAAAgAAAAAAAAAAlwcmVkaWN0b3IAAAAAAAATAAAAAAAAAAZ4X2hhc2gAAAAAA+4AAAAg",
-        "AAAAAAAAAKVPbmUtdGltZSBjb25maWd1cmF0aW9uLiBgcm91dGVyYCBpcyB0aGUgZGVwbG95ZWQgUklTQyBaZXJvIHZlcmlmaWVyCnJvdXRlcjsgYGltYWdlX2lkYCBpcyB0aGUgVmVpbCBndWVzdCdzIHByb2dyYW0gSUQ7IGBkZWFkbGluZWAgaXMgdGhlCnJvdW5kIGN1dG9mZiAodW5peCBzZWNvbmRzKS4AAAAAAAAEaW5pdAAAAAQAAAAAAAAABW93bmVyAAAAAAAAEwAAAAAAAAAGcm91dGVyAAAAAAATAAAAAAAAAAhpbWFnZV9pZAAAA+4AAAAgAAAAAAAAAAhkZWFkbGluZQAAAAYAAAABAAAD6QAAAAIAAAAD",
+        "AAAAAAAAARFPbmUtdGltZSBjb25maWd1cmF0aW9uIGZvciBhIHByZWRpY3Rpb24gcm91bmQuIGByb3V0ZXJgIGlzIHRoZSBkZXBsb3llZApSSVNDIFplcm8gdmVyaWZpZXIgcm91dGVyOyBgaW1hZ2VfaWRgIGlzIHRoZSBWZWlsIGd1ZXN0J3MgcHJvZ3JhbSBJRDsKYGRlYWRsaW5lYCBpcyB0aGUgY29tbWl0IGN1dG9mZiAodW5peCBzZWNvbmRzKTsgYHF1ZXN0aW9uYCwgYHhgLCBhbmQKYGFzc2V0YCBkZXNjcmliZSB0aGUgcm91bmQgc28gdGhlIFVJIGNhbiBwcmVzZW50IGEgcmVhbCBldmVudC4AAAAAAAAEaW5pdAAAAAcAAAAAAAAABW93bmVyAAAAAAAAEwAAAAAAAAAGcm91dGVyAAAAAAATAAAAAAAAAAhpbWFnZV9pZAAAA+4AAAAgAAAAAAAAAAhkZWFkbGluZQAAAAYAAAAAAAAACHF1ZXN0aW9uAAAAEAAAAAAAAAABeAAAAAAAAAsAAAAAAAAABWFzc2V0AAAAAAAAEAAAAAEAAAPpAAAAAgAAAAM=",
         "AAAAAAAAAThTdWJtaXQgYSBjb21taXRtZW50IGJhY2tlZCBieSBhIHZhbGlkIHByb29mIChGUi0xLi5GUi00KS4KCi0gYHByZWRpY3RvcmA6IHRoZSBjb21taXR0aW5nIGFjY291bnQgKG11c3QgYXV0aG9yaXplKS4KLSBgc2VhbGA6IHRoZSBHcm90aDE2IHNlYWwgZnJvbSB0aGUgaG9zdCAoYGVuY29kZV9zZWFsYCkuCi0gYHhfaGFzaGAsIGBjb21taXRtZW50X2NgOiB0aGUgam91cm5hbCdzIHR3byBoYWx2ZXM7IHRoZSBjb250cmFjdApyZWNvbXB1dGVzIHRoZSBqb3VybmFsIGRpZ2VzdCBmcm9tIHRoZW0gYW5kIGNoZWNrcyB0aGUgcHJvb2YgYWdhaW5zdCBpdC4AAAAGY29tbWl0AAAAAAAEAAAAAAAAAAlwcmVkaWN0b3IAAAAAAAATAAAAAAAAAARzZWFsAAAADgAAAAAAAAAGeF9oYXNoAAAAAAPuAAAAIAAAAAAAAAAMY29tbWl0bWVudF9jAAAD7gAAACAAAAABAAAD6QAAAAIAAAAD",
-        "AAAAAAAAAQtSZXZlYWwgYCh5LCBzYWx0KWAgZm9yIGEgcHJpb3IgY29tbWl0bWVudCAoRlItNiwgRlItNykuCgpSZXF1aXJlcyB0aGUgb3V0Y29tZSB0byBiZSBzZXQuIFJlY29tcHV0ZXMgYHNoYTI1Nih5X2xlMTYgfHwgc2FsdClgIGFuZApyZWplY3RzIHVubGVzcyBpdCBlcXVhbHMgdGhlIHN0b3JlZCBjb21taXRtZW50IGBDYC4gT24gc3VjY2VzcywgcmVjb3Jkcwpgc2NvcmUgPSB8eSAtIG91dGNvbWV8YCBhbmQgYWRkcyB0aGUgcHJlZGljdG9yIHRvIHRoZSBsZWFkZXJib2FyZC4AAAAABnJldmVhbAAAAAAAAwAAAAAAAAAJcHJlZGljdG9yAAAAAAAAEwAAAAAAAAABeQAAAAAAAAsAAAAAAAAABHNhbHQAAAPuAAAAIAAAAAEAAAPpAAAACwAAAAM=",
-        "AAAAAAAAAAAAAAAJZ2V0X2VudHJ5AAAAAAAAAQAAAAAAAAAJcHJlZGljdG9yAAAAAAAAEwAAAAEAAAPoAAAH0AAAAAVFbnRyeQAAAA==",
+        "AAAAAAAAAWdSZXZlYWwgYChZLCBzYWx0KWAgYW5kIGJlIHNjb3JlZCAoRlItNiwgRlItNykuCgpSZXF1aXJlcyB0aGUgb3V0Y29tZSB0byBiZSBzZXQuIFJlY29tcHV0ZXMgYHNoYTI1NihZX2xlX2J5dGVzIHx8IHNhbHQpYCDigJQKdGhlIGlkZW50aWNhbCBwcmVpbWFnZSB0aGUgZ3Vlc3QgaGFzaGVkIChZIGFzIGkxMjggbGl0dGxlLWVuZGlhbiwgdGhlbiB0aGUKMzItYnl0ZSBzYWx0KSDigJQgYW5kIHJlamVjdHMgdW5sZXNzIGl0IGVxdWFscyB0aGUgc3RvcmVkIGNvbW1pdG1lbnQgYENgLgpPbiBzdWNjZXNzIHRoZSBzY29yZSBpcyBgfFkgLSBvdXRjb21lfGAgYW5kIGFuIGBFbnRyeWAgaXMgcmVjb3JkZWQuClJldHVybnMgdGhlIHNjb3JlLgAAAAAGcmV2ZWFsAAAAAAADAAAAAAAAAAlwcmVkaWN0b3IAAAAAAAATAAAAAAAAAAF5AAAAAAAACwAAAAAAAAAEc2FsdAAAA+4AAAAgAAAAAQAAA+kAAAALAAAAAw==",
+        "AAAAAAAAADJGZXRjaCBhIHByZWRpY3RvcidzIHJldmVhbGVkK3Njb3JlZCBlbnRyeSwgaWYgYW55LgAAAAAACWdldF9lbnRyeQAAAAAAAAEAAAAAAAAACXByZWRpY3RvcgAAAAAAABMAAAABAAAD6AAAB9AAAAAFRW50cnkAAAA=",
         "AAAAAAAAAAAAAAAKZ2V0X2NvbmZpZwAAAAAAAAAAAAEAAAPpAAAH0AAAAAZDb25maWcAAAAAAAM=",
-        "AAAAAAAAAAAAAAALZ2V0X291dGNvbWUAAAAAAAAAAAEAAAPoAAAACw==",
-        "AAAAAAAAAE5MZWFkZXJib2FyZDogcmV2ZWFsZWQgZW50cmllcyByYW5rZWQgYmVzdC1maXJzdCAoc21hbGxlc3Qgc2NvcmUgZmlyc3QpIChGUi04KS4AAAAAAAtsZWFkZXJib2FyZAAAAAAAAAAAAQAAA+oAAAfQAAAABUVudHJ5AAAA",
-        "AAAAAAAAAIhPd25lci1vbmx5OiBzZXQgdGhlIGFjdHVhbCBvdXRjb21lIG9uY2UsIGFmdGVyIHRoZSBldmVudCAoRlItNSkuClJlamVjdHMgYSBzZWNvbmQgY2FsbCBzbyB0aGUgdGFyZ2V0IGNhbid0IGJlIG1vdmVkIGFmdGVyIHJldmVhbHMgYmVnaW4uAAAAC3NldF9vdXRjb21lAAAAAAEAAAAAAAAAB291dGNvbWUAAAAACwAAAAEAAAPpAAAAAgAAAAM=",
-        "AAAAAAAAADVPd25lci1vbmx5OiB1cGRhdGUgdGhlIHJvdW5kIGRlYWRsaW5lICh1bml4IHNlY29uZHMpLgAAAAAAAAxzZXRfZGVhZGxpbmUAAAABAAAAAAAAAAhkZWFkbGluZQAAAAYAAAABAAAD6QAAAAIAAAAD",
-        "AAAAAAAAAHtPd25lci1vbmx5OiB1cGRhdGUgdGhlIHRydXN0ZWQgZ3Vlc3QgaW1hZ2UgSUQgKGUuZy4gYWZ0ZXIgYSBndWVzdCByZWJ1aWxkCm9yIHRvIHBvaW50IGF0IGEgbmV3IHByZWRpY3Rpb24gcm91bmQncyBwcm9ncmFtKS4AAAAADHNldF9pbWFnZV9pZAAAAAEAAAAAAAAACGltYWdlX2lkAAAD7gAAACAAAAABAAAD6QAAAAIAAAAD",
+        "AAAAAAAAACxUaGUgYWN0dWFsIG91dGNvbWUsIGlmIHRoZSBvd25lciBoYXMgc2V0IGl0LgAAAAtnZXRfb3V0Y29tZQAAAAAAAAAAAQAAA+gAAAAL",
+        "AAAAAAAAAEZMZWFkZXJib2FyZDogcmV2ZWFsZWQgZW50cmllcyByYW5rZWQgYmVzdCAobG93ZXN0IHNjb3JlKSBmaXJzdCAoRlItOCkuAAAAAAALbGVhZGVyYm9hcmQAAAAAAAAAAAEAAAPqAAAH0AAAAAVFbnRyeQAAAA==",
+        "AAAAAAAAAMBPd25lciBzZXRzIHRoZSBhY3R1YWwgb3V0Y29tZSBvbmNlLCBhZnRlciB0aGUgZXZlbnQgKEZSLTUpLgoKU2V0LW9uY2U6IGEgc2Vjb25kIGNhbGwgaXMgcmVqZWN0ZWQgd2l0aCBgT3V0Y29tZUFscmVhZHlTZXRgLCBzbyB0aGUgb3duZXIKY2Fubm90IG1vdmUgdGhlIHRhcmdldCBhZnRlciBwcmVkaWN0b3JzIGJlZ2luIHJldmVhbGluZy4AAAALc2V0X291dGNvbWUAAAAAAQAAAAAAAAAHb3V0Y29tZQAAAAALAAAAAQAAA+kAAAACAAAAAw==",
+        "AAAAAAAAAD9VcGRhdGUgdGhlIHJvdW5kIGRlYWRsaW5lIChvd25lciBvbmx5KS4gVXNlZnVsIGZvciBkZW1vIHJlc2V0cy4AAAAADHNldF9kZWFkbGluZQAAAAEAAAAAAAAACGRlYWRsaW5lAAAABgAAAAEAAAPpAAAAAgAAAAM=",
+        "AAAAAAAAAMRVcGRhdGUgdGhlIGFjY2VwdGVkIGd1ZXN0IGltYWdlIElEIChvd25lciBvbmx5KS4gTmVlZGVkIGJlY2F1c2UgdGhlIENJCmJ1aWxkJ3MgaW1hZ2UgSUQgaXMgY2Fub25pY2FsIGFuZCBtYXkgY2hhbmdlIGlmIHRoZSBDSSBydW5uZXIgY2hhbmdlcwooc2VlIG1lbW9yeS5tZDogaW1hZ2UgSUQgZGlmZmVycyBieSBidWlsZCBlbnZpcm9ubWVudCkuAAAADHNldF9pbWFnZV9pZAAAAAEAAAAAAAAACGltYWdlX2lkAAAD7gAAACAAAAABAAAD6QAAAAIAAAAD",
         "AAAAAAAAACdGZXRjaCBhIHByZWRpY3RvcidzIGNvbW1pdG1lbnQsIGlmIGFueS4AAAAADmdldF9jb21taXRtZW50AAAAAAABAAAAAAAAAAlwcmVkaWN0b3IAAAAAAAATAAAAAQAAA+gAAAfQAAAACkNvbW1pdG1lbnQAAA==",
         "AAAAAAAAADlBbGwgY29tbWl0bWVudHMgKGZvciBsaXN0aW5nIG9wZW4gY29tbWl0bWVudHMgaW4gdGhlIFVJKS4AAAAAAAAPYWxsX2NvbW1pdG1lbnRzAAAAAAAAAAABAAAD7AAAABMAAAfQAAAACkNvbW1pdG1lbnQAAA==",
         "AAAAAQAAAZFPdXRwdXQgb2YgYSBSSVNDIFplcm8gZ3Vlc3QgcHJvZ3JhbSBleGVjdXRpb24uCgpUaGUgb3V0cHV0IGNvbnRhaW5zIHRoZSBwdWJsaWMgcmVzdWx0cyBvZiBleGVjdXRpb24gKGpvdXJuYWwpIGFuZCBhbnkKYXNzdW1wdGlvbnMgKGRlcGVuZGVuY2llcyBvbiBvdGhlciBwcm9vZnMpLiBUaGlzIHN0cnVjdHVyZSBpcyBoYXNoZWQKdG8gcHJvZHVjZSB0aGUgYG91dHB1dGAgZmllbGQgaW4gW2BSZWNlaXB0Q2xhaW1gXS4KCiMgRmllbGRzCgotICoqam91cm5hbF9kaWdlc3QqKjogU0hBLTI1NiBoYXNoIG9mIHRoZSBqb3VybmFsIChwdWJsaWMgb3V0cHV0cykKLSAqKmFzc3VtcHRpb25zX2RpZ2VzdCoqOiBTSEEtMjU2IGhhc2ggb2YgYXNzdW1wdGlvbnMgKHplcm8gZm9yCnVuY29uZGl0aW9uYWwgcHJvb2ZzKQAAAAAAAAAAAAAGT3V0cHV0AAAAAAACAAAAh1NIQS0yNTYgZGlnZXN0IG9mIGFzc3VtcHRpb25zIChkZXBlbmRlbmNpZXMgb24gb3RoZXIgcmVjZWlwdHMpLgoKRm9yIHVuY29uZGl0aW9uYWwgcmVjZWlwdHMgKHRoZSBjb21tb24gY2FzZSksIHRoaXMgaXMgdGhlIHplcm8gZGlnZXN0LgAAAAASYXNzdW1wdGlvbnNfZGlnZXN0AAAAAAPuAAAAIAAAAExTSEEtMjU2IGRpZ2VzdCBvZiB0aGUgam91cm5hbCBieXRlcyAocHVibGljIG91dHB1dHMgZnJvbSB0aGUgZ3Vlc3QKcHJvZ3JhbSkuAAAADmpvdXJuYWxfZGlnZXN0AAAAAAPuAAAAIA==",

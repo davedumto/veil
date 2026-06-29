@@ -6,7 +6,7 @@
 // simulate against the RPC. Writes (commit, reveal) are built, signed by the
 // connected wallet, and submitted. All against testnet.
 
-import { Client, type Entry, type Commitment } from "./bindings";
+import { Client, type Entry, type Commitment, type Config } from "./bindings";
 import {
   VEIL_CONTRACT_ID,
   RPC_URL,
@@ -20,7 +20,7 @@ import {
 // out of the SSR module graph entirely — reads render server-side, writes pull
 // the wallet in only in the browser.
 
-export type { Entry, Commitment };
+export type { Entry, Commitment, Config };
 
 /** Read-only client (no signing) — for leaderboard / commitments / config. */
 export function readClient(): Client {
@@ -59,6 +59,13 @@ export async function getOutcome(): Promise<bigint | null> {
   const tx = await readClient().get_outcome();
   // Option<i128> → bigint | undefined
   return tx.result ?? null;
+}
+
+/** Round metadata (question, public input X, asset, deadline, owner). */
+export async function getConfig(): Promise<Config> {
+  const tx = await readClient().get_config();
+  // get_config returns Result<Config>; unwrap (throws on the rare error).
+  return tx.result.unwrap();
 }
 
 export async function getAllCommitments(): Promise<

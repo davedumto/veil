@@ -32,7 +32,7 @@
 use risc0_interface::RiscZeroVerifierRouterClient;
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, Address, Bytes, BytesN,
-    Env, Map, Vec,
+    Env, Map, String, Vec,
 };
 
 #[contracterror]
@@ -61,6 +61,16 @@ pub struct Config {
     /// Round deadline as a ledger unix timestamp (seconds). Commits at or after
     /// this instant are rejected. Distinct from the hackathon deadline (FR-3).
     pub deadline: u64,
+    /// Human-readable round question, e.g. "BTC/USD close on 2026-07-01?".
+    /// Lets the UI present a real prediction round, not a bare contract.
+    pub question: String,
+    /// The public market input `X` for this round (integer, e.g. price in
+    /// cents at round open). The guest hashes this into `x_hash`; the proving
+    /// service uses it as the public input so every predictor forecasts the
+    /// same `X`.
+    pub x: i128,
+    /// Asset / unit label for display, e.g. "BTC/USD (cents)".
+    pub asset: String,
 }
 
 #[contracttype]
@@ -126,15 +136,19 @@ pub struct VeilRegistry;
 
 #[contractimpl]
 impl VeilRegistry {
-    /// One-time configuration. `router` is the deployed RISC Zero verifier
-    /// router; `image_id` is the Veil guest's program ID; `deadline` is the
-    /// round cutoff (unix seconds).
+    /// One-time configuration for a prediction round. `router` is the deployed
+    /// RISC Zero verifier router; `image_id` is the Veil guest's program ID;
+    /// `deadline` is the commit cutoff (unix seconds); `question`, `x`, and
+    /// `asset` describe the round so the UI can present a real event.
     pub fn init(
         env: Env,
         owner: Address,
         router: Address,
         image_id: BytesN<32>,
         deadline: u64,
+        question: String,
+        x: i128,
+        asset: String,
     ) -> Result<(), Error> {
         if env.storage().instance().has(&DataKey::Config) {
             return Err(Error::AlreadyInitialized);
@@ -142,7 +156,7 @@ impl VeilRegistry {
         owner.require_auth();
         env.storage().instance().set(
             &DataKey::Config,
-            &Config { owner, router, image_id, deadline },
+            &Config { owner, router, image_id, deadline, question, x, asset },
         );
         env.storage()
             .instance()

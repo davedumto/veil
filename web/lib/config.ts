@@ -13,13 +13,14 @@ export const NETWORK_PASSPHRASE =
 export const RPC_URL =
   process.env.NEXT_PUBLIC_RPC_URL ?? "https://soroban-testnet.stellar.org";
 
-// Live veil registry. Defaults to the multi-predictor demo round (fresh round
-// deployed from the rebuilt wasm): 3 differentiated predictors on the
-// leaderboard, outcome $101.00, deadline year 2100 so commits stay open.
-// Overridable via env. (Prior single-predictor round: CBGZ6UHA…)
+// Live veil registry. Defaults to the evolved "real round" contract: carries
+// round metadata (question / public input X / asset) and a real ~7-day
+// deadline, so the UI presents an actual prediction event and users prove their
+// own forecast. Overridable via env.
+// (Prior multi-predictor demo round: CCV5IYIU…; original: CBGZ6UHA…)
 export const VEIL_CONTRACT_ID =
   process.env.NEXT_PUBLIC_VEIL_CONTRACT_ID ??
-  "CCV5IYIU4YLGLCLQHF2NQWLP57DIKSLOD2DQPYSVHM3PEJNGXQXTDR4F";
+  "CCPEIU4WEQI2TYD4QCAH3GICM5EDE2IQFBB5EZZQUPSVBUEISSL7EIQI";
 
 // Live forked Nethermind RISC Zero verifier router.
 export const VERIFIER_CONTRACT_ID =

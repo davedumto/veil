@@ -10,7 +10,7 @@ use super::*;
 use soroban_sdk::{
     contract as sdk_contract, contractimpl as sdk_contractimpl,
     testutils::{Address as _, Ledger},
-    Address, Bytes, BytesN, Env,
+    Address, Bytes, BytesN, Env, String,
 };
 
 /// Recompute the commitment exactly as the guest/contract do:
@@ -59,7 +59,9 @@ fn setup(deadline: u64, now: u64) -> Ctx {
     let predictor = Address::generate(&env);
     let image_id = BytesN::from_array(&env, &[9u8; 32]);
 
-    veil.init(&owner, &router, &image_id, &deadline);
+    let question = String::from_str(&env, "Test round?");
+    let asset = String::from_str(&env, "TEST (cents)");
+    veil.init(&owner, &router, &image_id, &deadline, &question, &10_000, &asset);
 
     Ctx { env, veil, owner, predictor, image_id, deadline }
 }
@@ -137,9 +139,11 @@ fn double_commit_is_rejected() {
 fn init_twice_is_rejected() {
     let c = setup(1_000, 100);
     let router2 = c.env.register(MockRouter, ());
+    let q = String::from_str(&c.env, "Test round?");
+    let a = String::from_str(&c.env, "TEST (cents)");
     let res = c
         .veil
-        .try_init(&c.owner, &router2, &c.image_id, &c.deadline);
+        .try_init(&c.owner, &router2, &c.image_id, &c.deadline, &q, &10_000, &a);
     assert_eq!(res, Err(Ok(Error::AlreadyInitialized)));
 }
 
@@ -155,6 +159,10 @@ fn get_config_returns_stored_config() {
     let cfg = c.veil.get_config();
     assert_eq!(cfg.deadline, 1_234);
     assert_eq!(cfg.image_id, c.image_id);
+    // Round metadata round-trips.
+    assert_eq!(cfg.question, String::from_str(&c.env, "Test round?"));
+    assert_eq!(cfg.x, 10_000);
+    assert_eq!(cfg.asset, String::from_str(&c.env, "TEST (cents)"));
 }
 
 #[test]
