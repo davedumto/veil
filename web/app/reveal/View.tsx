@@ -9,7 +9,6 @@ import {
   type Commitment,
   type Entry,
 } from "@/lib/veil";
-import { DEMO_REVEAL } from "@/lib/proof";
 import { explorerTx } from "@/lib/config";
 import { useWallet } from "@/components/useWallet";
 import {
@@ -38,8 +37,12 @@ type RevealState =
 export default function RevealPage() {
   const wallet = useWallet();
 
-  const [y, setY] = useState<string>(String(DEMO_REVEAL.y));
-  const [saltHex, setSaltHex] = useState<string>(DEMO_REVEAL.saltHex);
+  // Prefilled from the user's OWN proof job (the forecast they generated on
+  // /predict, persisted in localStorage), so reveal matches their commitment.
+  // Empty if they're revealing on a different device — they re-enter their secrets.
+  const [y, setY] = useState<string>("");
+  const [saltHex, setSaltHex] = useState<string>("");
+  const [prefilled, setPrefilled] = useState(false);
 
   const [commitment, setCommitment] = useState<Commitment | null>(null);
   const [existingEntry, setExistingEntry] = useState<Entry | null>(null);
@@ -84,6 +87,29 @@ export default function RevealPage() {
     }, 0);
     return () => clearTimeout(id);
   }, [wallet.address, loadFor]);
+
+  // Prefill Y + salt from the user's own proof job (if generated on this device).
+  useEffect(() => {
+    const id = setTimeout(async () => {
+      try {
+        const jobId = localStorage.getItem("veil:proofJob");
+        if (!jobId) return;
+        const res = await fetch(`/api/proof?jobId=${encodeURIComponent(jobId)}`);
+        if (!res.ok) return;
+        const s = await res.json();
+        const f = s.forecast;
+        const salt = s.bundle?.saltHex ?? f?.saltHex;
+        if (f?.y != null && salt) {
+          setY(String(f.y));
+          setSaltHex(salt);
+          setPrefilled(true);
+        }
+      } catch {
+        /* no prefill — user enters manually */
+      }
+    }, 0);
+    return () => clearTimeout(id);
+  }, []);
 
   async function doReveal() {
     setState({ phase: "revealing" });
@@ -242,9 +268,9 @@ export default function RevealPage() {
                 className="text-[var(--faint)]"
                 style={{ fontSize: "11px", lineHeight: 1.6 }}
               >
-                Demo values are prefilled — the predictor &quot;remembers&quot;
-                their secret Y and salt. Changing either will fail the on-chain
-                sha256 check.
+                {prefilled
+                  ? "Loaded from the proof you generated on this device. Changing Y or salt will fail the on-chain sha256 check."
+                  : "Enter the Y and salt from when you committed. They must match exactly — the contract recomputes sha256(Y ‖ salt) and rejects any mismatch."}
               </p>
 
               <button
