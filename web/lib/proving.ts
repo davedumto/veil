@@ -13,7 +13,14 @@
 // demo; a real deployment would use a queue/DB).
 
 import { execFile } from "node:child_process";
-import { readFile, mkdtemp, rm } from "node:fs/promises";
+import {
+  readFile,
+  writeFile,
+  mkdtemp,
+  mkdir,
+  rm,
+} from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -49,8 +56,65 @@ export interface Job {
   forecast?: { x: number; w0: number; w1: number; y: number; saltHex: string };
 }
 
-// In-memory job store. Survives for the life of the server process.
+// Disk-backed job store. The in-memory Map is a cache; jobs are persisted to a
+// JSON file so they survive server restarts (dev hot-reloads, single-server
+// redeploys). On a cold read, a job still mid-proof is re-attached to its CI run
+// so polling resumes — no orphaned proofs.
+const STORE_DIR = path.join(process.cwd(), ".veil-jobs");
+const STORE_FILE = path.join(STORE_DIR, "jobs.json");
+
 const jobs = new Map<string, Job>();
+let loaded = false;
+
+function loadStore(): void {
+  if (loaded) return;
+  loaded = true;
+  try {
+    if (existsSync(STORE_FILE)) {
+      const data = JSON.parse(readFileSync(STORE_FILE, "utf8")) as Job[];
+      for (const j of data) jobs.set(j.id, j);
+      // Re-attach any job that was still proving when the process died.
+      for (const j of jobs.values()) {
+        if ((j.phase === "proving" || j.phase === "queued") && j.runId) {
+          void resume(j.id);
+        }
+      }
+    }
+  } catch {
+    /* corrupt/missing store — start fresh */
+  }
+}
+
+async function persist(): Promise<void> {
+  try {
+    if (!existsSync(STORE_DIR)) await mkdir(STORE_DIR, { recursive: true });
+    await writeFile(STORE_FILE, JSON.stringify([...jobs.values()], null, 2));
+  } catch {
+    /* best-effort; in-memory still works */
+  }
+}
+
+// Re-attach to a still-running CI run after a restart, then finish the pipeline.
+async function resume(id: string): Promise<void> {
+  const job = jobs.get(id);
+  if (!job || !job.runId) return;
+  try {
+    const ok = await waitForRun(job.runId);
+    if (!ok) {
+      job.phase = "failed";
+      job.error = "CI proof run did not succeed.";
+      await persist();
+      return;
+    }
+    job.bundle = await downloadBundle(job.runId, id, job.forecast!.saltHex);
+    job.phase = "ready";
+    await persist();
+  } catch (e) {
+    job.phase = "failed";
+    job.error = e instanceof Error ? e.message : String(e);
+    await persist();
+  }
+}
 
 function ghEnv(): NodeJS.ProcessEnv {
   // Prefer an explicit token (hosted); otherwise inherit the logged-in gh CLI.
@@ -93,19 +157,23 @@ export function startProof(input: {
     createdAt: Date.now(),
     forecast: { x: input.x, w0: input.w0, w1: input.w1, y, saltHex: input.saltHex },
   };
+  loadStore();
   jobs.set(id, job);
+  void persist();
   // Fire-and-forget the async pipeline; status is polled via getJob.
-  void runPipeline(id, input).catch((e) => {
+  void runPipeline(id, input).catch(async (e) => {
     const j = jobs.get(id);
     if (j) {
       j.phase = "failed";
       j.error = e instanceof Error ? e.message : String(e);
+      await persist();
     }
   });
   return job;
 }
 
 export function getJob(id: string): Job | undefined {
+  loadStore();
   return jobs.get(id);
 }
 
@@ -128,16 +196,19 @@ async function runPipeline(
     "-f", `salt=${input.saltHex}`,
   ]);
   job.phase = "proving";
+  await persist();
 
   // 2. Find the run by its run-name "proof:<id>" (poll briefly; dispatch lag).
   const runId = await findRunId(id);
   job.runId = runId;
+  await persist(); // persist the runId so a restart can re-attach
 
   // 3. Wait for the run to complete.
   const ok = await waitForRun(runId);
   if (!ok) {
     job.phase = "failed";
     job.error = "CI proof run did not succeed.";
+    await persist();
     return;
   }
 
@@ -145,6 +216,7 @@ async function runPipeline(
   const bundle = await downloadBundle(runId, id, input.saltHex);
   job.bundle = bundle;
   job.phase = "ready";
+  await persist();
 }
 
 async function findRunId(label: string): Promise<string> {
